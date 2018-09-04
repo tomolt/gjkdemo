@@ -77,12 +77,6 @@ static float v_dot(vertex lhs, vertex rhs)
 	return lhs.x * rhs.x + lhs.y * rhs.y;
 }
 
-/* TODO better name */
-static vertex v_perp2(vertex from, vertex to)
-{
-	return v_perp(v_sub(to, from));
-}
-
 static vertex best_vertex(vlist vertices, float (*score)(vertex, void *), void *userdata)
 {
 	assert(vertices.count > 0);
