@@ -36,9 +36,13 @@ static vertex shape2_buf[3] = {
 };
 
 static Shape shape1 = {{4, shape1_buf}, {0.0, 0.0}};
-static Shape shape2 = {{3, shape2_buf}, {0.0, 0.0}};
+static Shape shape2 = {{3, shape2_buf}, {3.0, 1.0}};
 
+int gjk_depth;
+int vis_slice;
+int gjk_span;
 float slider;
+Shape vis_shape;
 
 static vertex v_neg(vertex v)
 {
@@ -93,11 +97,11 @@ static vertex best_vertex(vlist vertices, float (*score)(vertex, void *), void *
 	return best_vertex;
 }
 
-static vlist vlist_new(vertex v)
+static vlist vlist_new(int count, vertex v[])
 {
-	vlist l = {1};
-	l.elems = calloc(l.count, sizeof(*l.elems));
-	l.elems[0] = v;
+	vlist l = {count};
+	l.elems = calloc(count, sizeof(*l.elems));
+	memcpy(l.elems, v, count * sizeof(*l.elems));
 	return l;
 }
 
@@ -111,6 +115,13 @@ static vlist vlist_join(vlist a, vlist b)
 	free(a.elems);
 	free(b.elems);
 	return l;
+}
+
+/* false -> counter-clockwise, true -> clockwise */
+static bool triangle_winding(vertex a, vertex b, vertex c)
+{
+	vertex ab = v_sub(b, a), ac = v_sub(c, a);
+	return (ab.x * ac.y - ab.y * ac.x) <= 0.0;
 }
 
 typedef struct {
@@ -134,18 +145,39 @@ static vertex support_polygon(Shape *shape, vertex direction)
 static vertex minkowski_support(Shape *pair[2], vertex dir)
 {
 	vertex a = support_polygon(pair[0], dir);
-	vertex b = support_polygon(pair[1], dir);
+	vertex b = support_polygon(pair[1], v_neg(dir));
 	return (vertex){a.x - b.x, a.y - b.y};
+}
+
+static void gjk_visualize_line(Shape *pair[2], vertex a, vertex b)
+{
+	if (gjk_depth++ != vis_slice) return;
+	vertex v[2] = {a, b};
+	vlist l = vlist_new(2, v);
+	vis_shape.position = v_sub(pair[0]->position, pair[1]->position);
+	vis_shape.vertices = l;
+}
+
+static void gjk_visualize_triangle(Shape *pair[2], vertex a, vertex b, vertex c)
+{
+	if (gjk_depth++ != vis_slice) return;
+	vertex v[3] = {a, b, c};
+	vlist l = vlist_new(3, v);
+	vis_shape.position = v_sub(pair[0]->position, pair[1]->position);
+	vis_shape.vertices = l;
 }
 
 static bool gjk_simplex3d(Shape *pair[2], vertex dir, vertex a, vertex b);
 
+/* TODO more correct name */
 static bool gjk_simplex2d(Shape *pair[2], vertex dir, vertex b)
 {
 	vertex a = minkowski_support(pair, dir);
-	if (v_dot(a, dir) < 0.0) return false;
+	gjk_visualize_line(pair, a, b);
+	if (v_dot(a, dir) <= 0.0) return false;
 	vertex ab = v_sub(b, a), ao = v_neg(a);
-	if (v_dot(ab, ao) > 0.0) {
+	assert(v_length(ab) > 0.0);
+	if (v_dot(ab, ao) >= 0.0) {
 		vertex n = v_perp(ab);
 		if (v_dot(n, ao) > 0.0) {
 			return gjk_simplex3d(pair, n, b, a);
@@ -157,18 +189,25 @@ static bool gjk_simplex2d(Shape *pair[2], vertex dir, vertex b)
 	}
 }
 
+/* TODO more correct name */
 static bool gjk_simplex3d(Shape *pair[2], vertex dir, vertex b, vertex c)
 {
 	vertex a = minkowski_support(pair, dir);
-	if (v_dot(a, dir) < 0.0) return false;
+	assert(triangle_winding(a, b, c) == true);
+	gjk_visualize_triangle(pair, a, b, c);
+	if (v_dot(a, dir) <= 0.0) return false;
 	vertex ab = v_sub(b, a), ac = v_sub(c, a);
 	vertex nb = v_perp(ab), nc = v_perp(v_neg(ac));
 	vertex ao = v_neg(a);
-	if (v_dot(nb, ao) < 0.0 && v_dot(nc, ao) < 0.0) {
+	assert(v_length(ab) > 0.0);
+	assert(v_length(ac) > 0.0);
+	assert(v_length(nb) > 0.0);
+	assert(v_length(nc) > 0.0);
+	if (v_dot(nb, ao) <= 0.0 && v_dot(nc, ao) <= 0.0) {
 		return true;
-	} else if (v_dot(ab, ao) > 0.0) {
+	} else if (v_dot(ab, ao) >= 0.0) {
 		return gjk_simplex3d(pair, nb, b, a);
-	} else if (v_dot(ac, ao) > 0.0) {
+	} else if (v_dot(ac, ao) >= 0.0) {
 		return gjk_simplex3d(pair, nc, c, a);
 	} else {
 		return gjk_simplex2d(pair, ao, a);
@@ -177,10 +216,13 @@ static bool gjk_simplex3d(Shape *pair[2], vertex dir, vertex b, vertex c)
 
 static bool detect_collision(Shape *s1, Shape *s2)
 {
+	gjk_depth = 0;
 	Shape *pair[2] = {s1, s2};
-	vertex init_dir = v_sub(s1->position, s2->position);
-	vertex seed = minkowski_support(pair, init_dir);
-	return gjk_simplex2d(pair, v_neg(seed), seed);
+	// vertex init_dir = v_sub(s1->position, s2->position);
+	vertex seed = minkowski_support(pair, (vertex){1.0, 0.0});
+	bool r = gjk_simplex2d(pair, v_neg(seed), seed);
+	gjk_span = gjk_depth;
+	return r;
 }
 
 typedef struct {
@@ -216,7 +258,7 @@ static vlist qhull_fractal(vlist cloud, vertex a, vertex b)
 	if (distance > 0.0001) {
 		return vlist_join(qhull_fractal(cloud, a, p), qhull_fractal(cloud, p, b));
 	} else {
-		return vlist_new(b);
+		return vlist_new(1, &b);
 	}
 }
 
@@ -224,7 +266,7 @@ static Shape construct_hull(Shape shape)
 {
 	vertex min = best_vertex(shape.vertices, vscore_minx, NULL);
 	vertex max = best_vertex(shape.vertices, vscore_maxx, NULL);
-	vlist vertices = vlist_new(min);
+	vlist vertices = vlist_new(1, &min);
 	vertices = vlist_join(vertices, qhull_fractal(shape.vertices, min, max));
 	vertices = vlist_join(vertices, qhull_fractal(shape.vertices, max, min));
 	free(shape.vertices.elems);
@@ -306,9 +348,9 @@ int main(int argc, char *argv[])
 			break;
 		}
 		slider = (sin(tmp / 10000.0) + 1.0) / 2.0;
+		vis_slice = roundf(slider * gjk_span);
 		Shape dshape = construct_hull(difference_shape(shape1, shape2));
-		// bool colliding = detect_collision(&shape1, &shape2);
-		bool colliding = false;
+		bool colliding = detect_collision(&shape1, &shape2);
 		SDL_SetRenderDrawColor(renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
 		SDL_RenderClear(renderer);
 		render_origin();
@@ -321,6 +363,8 @@ int main(int argc, char *argv[])
 		render_shape(&shape2);
 		SDL_SetRenderDrawColor(renderer, 0, 255, 0, SDL_ALPHA_OPAQUE);
 		render_shape(&dshape);
+		SDL_SetRenderDrawColor(renderer, 0, 0, 255, SDL_ALPHA_OPAQUE);
+		render_shape(&vis_shape);
 		SDL_SetRenderDrawColor(renderer, 0, 0, 255, SDL_ALPHA_OPAQUE);
 		SDL_Rect slider_rect = {
 			0,

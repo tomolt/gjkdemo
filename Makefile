@@ -1,4 +1,4 @@
-CFLAGS+=-Wall -pedantic
+CFLAGS+=-g -Wall -pedantic
 LDFLAGS+=-lm -lSDL2
 
 .PHONY: all clean
