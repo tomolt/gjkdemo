@@ -144,26 +144,26 @@ static vertex support_polygon(Shape *shape, vertex direction)
 
 static vertex minkowski_support(Shape *pair[2], vertex dir)
 {
-	vertex a = support_polygon(pair[0], dir);
-	vertex b = support_polygon(pair[1], v_neg(dir));
+	vertex a = v_add(support_polygon(pair[0], dir), pair[0]->position);
+	vertex b = v_add(support_polygon(pair[1], v_neg(dir)), pair[1]->position);
 	return (vertex){a.x - b.x, a.y - b.y};
 }
 
 static void gjk_visualize_line(Shape *pair[2], vertex a, vertex b)
 {
-	if (gjk_depth++ != vis_slice) return;
+	if (++gjk_depth != vis_slice) return;
 	vertex v[2] = {a, b};
 	vlist l = vlist_new(2, v);
-	vis_shape.position = v_sub(pair[0]->position, pair[1]->position);
+	vis_shape.position = (vertex){0.0, 0.0};
 	vis_shape.vertices = l;
 }
 
 static void gjk_visualize_triangle(Shape *pair[2], vertex a, vertex b, vertex c)
 {
-	if (gjk_depth++ != vis_slice) return;
+	if (++gjk_depth != vis_slice) return;
 	vertex v[3] = {a, b, c};
 	vlist l = vlist_new(3, v);
-	vis_shape.position = v_sub(pair[0]->position, pair[1]->position);
+	vis_shape.position = (vertex){0.0, 0.0};
 	vis_shape.vertices = l;
 }
 
@@ -217,6 +217,8 @@ static bool gjk_simplex3d(Shape *pair[2], vertex dir, vertex b, vertex c)
 static bool detect_collision(Shape *s1, Shape *s2)
 {
 	gjk_depth = 0;
+	free(vis_shape.vertices.elems);
+	vis_shape.vertices = (vlist){0, NULL};
 	Shape *pair[2] = {s1, s2};
 	// vertex init_dir = v_sub(s1->position, s2->position);
 	vertex seed = minkowski_support(pair, (vertex){1.0, 0.0});
