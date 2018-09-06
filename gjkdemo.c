@@ -180,7 +180,7 @@ static vertex sgjk_support(Shape *pair[2], vertex dir)
 {
 	vertex a = v_add(support_polygon(pair[0], dir), pair[0]->position);
 	vertex b = v_add(support_polygon(pair[1], v_neg(dir)), pair[1]->position);
-	return (vertex){a.x - b.x, a.y - b.y};
+	return v_sub(a, b);
 }
 
 static bool sgjk_crawl(Shape *pair[2], vertex p, vertex a, vertex b, vertex c)
@@ -192,6 +192,8 @@ static bool sgjk_test(Shape *pair[2], vertex b, vertex c)
 {
 	vertex dir = v_perp2(c, b), a = sgjk_support(pair, dir);
 	if (v_dot(a, dir) <= 0.0) return false;
+	assert(triangle_winding(a, b, c) == true);
+	gjk_visualize_triangle(pair, a, b, c);
 	vertex pb = v_perp2(a, b), pc = v_perp2(c, a);
 	if (v_dot(pb, a) >= 0.0 && v_dot(pc, a) >= 0.0) return true;
 	return sgjk_crawl(pair, v_add(v_norm(pb), v_neg(v_norm(pc))), a, b, c);
@@ -206,8 +208,13 @@ static bool sgjk(Shape *pair[2])
 
 static bool detect_collision(Shape *s1, Shape *s2)
 {
+	gjk_depth = 0;
+	free(vis_shape.vertices.elems);
+	vis_shape.vertices = (vlist){0, NULL};
 	Shape *pair[2] = {s1, s2};
-	return sgjk(pair);
+	bool r = sgjk(pair);
+	gjk_span = gjk_depth;
+	return r;
 }
 
 typedef struct {
