@@ -81,6 +81,23 @@ static float v_dot(vertex lhs, vertex rhs)
 	return lhs.x * rhs.x + lhs.y * rhs.y;
 }
 
+static float v_distance(vertex lhs, vertex rhs)
+{
+	return v_length(v_sub(rhs, lhs));
+}
+
+/* forward transform (from coordinate- to screen-space) */
+static inline SDL_Point ftransform(vertex v)
+{
+	return (SDL_Point){512 + v.x * 50, 384 - v.y * 50};
+}
+
+/* backward transform (from screen- to coordinate-space) */
+static inline vertex btransform(SDL_Point p)
+{
+	return (vertex){(p.x - 512) / 50.0, (-p.y + 384) / 50.0};
+}
+
 static vertex best_vertex(vlist vertices, float (*score)(vertex, void *), void *userdata)
 {
 	assert(vertices.count > 0);
@@ -319,6 +336,15 @@ static void render_shape(Shape *shape)
 
 static void debug_hook(void) {}
 
+typedef enum {
+	Grab_None,
+	Grab_Shape1,
+	Grab_Shape2,
+	Grab_Slider
+} Grabbable;
+
+Grabbable grabbed;
+
 int main(int argc, char *argv[])
 {
 	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
@@ -328,7 +354,6 @@ int main(int argc, char *argv[])
 	renderer = SDL_CreateRenderer(window, -1,
 		SDL_RENDERER_ACCELERATED);
 	bool running = true;
-	unsigned long long tmp = 0;
 	while (running) {
 		SDL_Event event;
 		SDL_PollEvent(&event);
@@ -338,18 +363,45 @@ int main(int argc, char *argv[])
 				debug_hook();
 			}
 			break;
-		case SDL_MOUSEMOTION:
-			shape2.position = (vertex){
-				(event.motion.x - 512) / 50.0,
-				(-event.motion.y + 384) / 50.0
-			};
+		case SDL_MOUSEBUTTONDOWN: {
+			SDL_Point mp = {event.button.x, event.button.y};
+			vertex mv = btransform(mp);
+			if (grabbed == Grab_None) {
+				if (v_distance(mv, shape1.position) <= 0.5) {
+					grabbed = Grab_Shape1;
+				} else if (v_distance(mv, shape2.position) <= 0.5) {
+					grabbed = Grab_Shape2;
+				} else if (mp.y >= 768 - 32) {
+					grabbed = Grab_Slider;
+				} else {
+					grabbed = Grab_None;
+				}
+			}
+			} break;
+		case SDL_MOUSEBUTTONUP:
+			grabbed = Grab_None;
 			break;
+		case SDL_MOUSEMOTION: {
+			SDL_Point mp = {event.motion.x, event.motion.y};
+			vertex mv = btransform(mp);
+			switch (grabbed) {
+			case Grab_Shape1:
+				shape1.position = mv;
+				break;
+			case Grab_Shape2:
+				shape2.position = mv;
+				break;
+			case Grab_Slider:
+				slider = mp.x / 1024.0;
+				break;
+			case Grab_None: break;
+			}
+			} break;
 		case SDL_QUIT:
 			SDL_Log("Quit after %i ticks.", event.quit.timestamp);
 			running = false;
 			break;
 		}
-		slider = (sin(tmp / 10000.0) + 1.0) / 2.0;
 		vis_slice = roundf(slider * gjk_span);
 		Shape dshape = construct_hull(difference_shape(shape1, shape2));
 		bool colliding = detect_collision(&shape1, &shape2);
@@ -377,7 +429,6 @@ int main(int argc, char *argv[])
 		SDL_RenderFillRect(renderer, &slider_rect);
 		SDL_RenderPresent(renderer);
 		free(dshape.vertices.elems);
-		++tmp;
 	}
 	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);
