@@ -76,6 +76,11 @@ static vertex v_sub(vertex lhs, vertex rhs)
 	return (vertex){lhs.x - rhs.x, lhs.y - rhs.y};
 }
 
+static vertex v_scale(vertex v, float s)
+{
+	return (vertex){v.x * s, v.y * s};
+}
+
 static float v_dot(vertex lhs, vertex rhs)
 {
 	return lhs.x * rhs.x + lhs.y * rhs.y;
@@ -166,6 +171,7 @@ static vertex minkowski_support(Shape *pair[2], vertex dir)
 	return (vertex){a.x - b.x, a.y - b.y};
 }
 
+#if 0
 static void gjk_visualize_line(Shape *pair[2], vertex a, vertex b)
 {
 	if (++gjk_depth != vis_slice) return;
@@ -174,6 +180,7 @@ static void gjk_visualize_line(Shape *pair[2], vertex a, vertex b)
 	vis_shape.position = (vertex){0.0, 0.0};
 	vis_shape.vertices = l;
 }
+#endif
 
 static void gjk_visualize_triangle(Shape *pair[2], vertex a, vertex b, vertex c)
 {
@@ -184,56 +191,25 @@ static void gjk_visualize_triangle(Shape *pair[2], vertex a, vertex b, vertex c)
 	vis_shape.vertices = l;
 }
 
-static bool gjk_simplex3v(Shape *pair[2], vertex dir, vertex a, vertex b);
-
-/* TODO more correct name */
-static bool gjk_simplex2v(Shape *pair[2], vertex dir, vertex b)
-{
-	vertex a = minkowski_support(pair, dir);
-	gjk_visualize_line(pair, a, b);
-	if (v_dot(a, dir) <= 0.0) return false;
-	vertex ab = v_sub(b, a), ao = v_neg(a);
-	assert(v_length(ab) > 0.0);
-	if (v_dot(ab, ao) >= 0.0) {
-		vertex n = v_perp(ab);
-		if (v_dot(n, ao) > 0.0) {
-			return gjk_simplex3v(pair, n, b, a);
-		} else {
-			return gjk_simplex3v(pair, v_neg(n), a, b);
-		}
-	} else {
-		return gjk_simplex2v(pair, ao, a);
-	}
-}
-
-/* TODO more correct name */
-static bool gjk_simplex3v(Shape *pair[2], vertex dir, vertex b, vertex c)
+static bool sgjk_simplex(Shape *pair[2], vertex dir, vertex b, vertex c)
 {
 	vertex a = minkowski_support(pair, dir);
 	assert(triangle_winding(a, b, c) == true);
-	gjk_visualize_triangle(pair, a, b, c);
 	if (v_dot(a, dir) <= 0.0) return false;
+	gjk_visualize_triangle(pair, a, b, c);
 	vertex ab = v_sub(b, a), ac = v_sub(c, a);
-	vertex nb = v_perp(ab), nc = v_perp(v_neg(ac));
+	vertex pb = v_perp(ab), pc = v_perp(v_neg(ac));
+	vertex ps = v_scale(v_add(v_norm(pb), v_neg(v_norm(pc))), 0.5);
 	vertex ao = v_neg(a);
 	assert(v_length(ab) > 0.0);
 	assert(v_length(ac) > 0.0);
-	assert(v_length(nb) > 0.0);
-	assert(v_length(nc) > 0.0);
-	if (v_dot(nb, ao) > 0.0) {
-		if (v_dot(ab, ao) > 0.0) {
-			return gjk_simplex3v(pair, nb, b, a);
-		} else {
-			return gjk_simplex2v(pair, ao, a);
-		}
-	} else if (v_dot(nc, ao) > 0.0) {
-		if (v_dot(ab, ao) > 0.0) {
-			return gjk_simplex3v(pair, nc, a, c);
-		} else {
-			return gjk_simplex2v(pair, ao, a);
-		}
-	} else {
+	assert(v_distance(b, c) > 0.0);
+	if (v_dot(pb, ao) <= 0.0 && v_dot(pc, ao) <= 0.0) {
 		return true;
+	} else if (v_dot(ps, ao) > 0.0) {
+		return sgjk_simplex(pair, pb, b, a);
+	} else {
+		return sgjk_simplex(pair, pc, a, c);
 	}
 }
 
@@ -243,9 +219,15 @@ static bool detect_collision(Shape *s1, Shape *s2)
 	free(vis_shape.vertices.elems);
 	vis_shape.vertices = (vlist){0, NULL};
 	Shape *pair[2] = {s1, s2};
-	// vertex init_dir = v_sub(s1->position, s2->position);
-	vertex seed = minkowski_support(pair, (vertex){1.0, 0.0});
-	bool r = gjk_simplex2v(pair, v_neg(seed), seed);
+	vertex b = minkowski_support(pair, (vertex){ 1.0,  0.0});
+	vertex c = minkowski_support(pair, (vertex){-1.0,  0.0});
+	vertex p = v_perp(v_sub(c, b));
+	bool r;
+	if (v_dot(p, v_neg(b)) > 0.0) {
+		r = sgjk_simplex(pair, p, c, b);
+	} else {
+		r = sgjk_simplex(pair, v_neg(p), b, c);
+	}
 	gjk_span = gjk_depth;
 	return r;
 }
@@ -353,7 +335,7 @@ Grabbable grabbed;
 int main(int argc, char *argv[])
 {
 	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
-	window = SDL_CreateWindow("2D GJK Demo   (Thomas Oltmann)",
+	window = SDL_CreateWindow("2D SGJK (Simplified GJK) Demo   (Thomas Oltmann)",
 		SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
 		1024, 768, 0);
 	renderer = SDL_CreateRenderer(window, -1,
