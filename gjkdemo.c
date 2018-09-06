@@ -41,7 +41,7 @@ static Shape shape2 = {{3, shape2_buf}, {3.0, 1.0}};
 int gjk_depth;
 int vis_slice;
 int gjk_span;
-float slider;
+float slider = 0.75;
 Shape vis_shape;
 
 static vertex v_neg(vertex v)
@@ -184,10 +184,10 @@ static void gjk_visualize_triangle(Shape *pair[2], vertex a, vertex b, vertex c)
 	vis_shape.vertices = l;
 }
 
-static bool gjk_simplex3d(Shape *pair[2], vertex dir, vertex a, vertex b);
+static bool gjk_simplex3v(Shape *pair[2], vertex dir, vertex a, vertex b);
 
 /* TODO more correct name */
-static bool gjk_simplex2d(Shape *pair[2], vertex dir, vertex b)
+static bool gjk_simplex2v(Shape *pair[2], vertex dir, vertex b)
 {
 	vertex a = minkowski_support(pair, dir);
 	gjk_visualize_line(pair, a, b);
@@ -197,17 +197,17 @@ static bool gjk_simplex2d(Shape *pair[2], vertex dir, vertex b)
 	if (v_dot(ab, ao) >= 0.0) {
 		vertex n = v_perp(ab);
 		if (v_dot(n, ao) > 0.0) {
-			return gjk_simplex3d(pair, n, b, a);
+			return gjk_simplex3v(pair, n, b, a);
 		} else {
-			return gjk_simplex3d(pair, v_neg(n), a, b);
+			return gjk_simplex3v(pair, v_neg(n), a, b);
 		}
 	} else {
-		return gjk_simplex2d(pair, ao, a);
+		return gjk_simplex2v(pair, ao, a);
 	}
 }
 
 /* TODO more correct name */
-static bool gjk_simplex3d(Shape *pair[2], vertex dir, vertex b, vertex c)
+static bool gjk_simplex3v(Shape *pair[2], vertex dir, vertex b, vertex c)
 {
 	vertex a = minkowski_support(pair, dir);
 	assert(triangle_winding(a, b, c) == true);
@@ -220,14 +220,20 @@ static bool gjk_simplex3d(Shape *pair[2], vertex dir, vertex b, vertex c)
 	assert(v_length(ac) > 0.0);
 	assert(v_length(nb) > 0.0);
 	assert(v_length(nc) > 0.0);
-	if (v_dot(nb, ao) <= 0.0 && v_dot(nc, ao) <= 0.0) {
-		return true;
-	} else if (v_dot(ab, ao) >= 0.0) {
-		return gjk_simplex3d(pair, nb, b, a);
-	} else if (v_dot(ac, ao) >= 0.0) {
-		return gjk_simplex3d(pair, nc, c, a);
+	if (v_dot(nb, ao) > 0.0) {
+		if (v_dot(ab, ao) > 0.0) {
+			return gjk_simplex3v(pair, nb, b, a);
+		} else {
+			return gjk_simplex2v(pair, ao, a);
+		}
+	} else if (v_dot(nc, ao) > 0.0) {
+		if (v_dot(ab, ao) > 0.0) {
+			return gjk_simplex3v(pair, nc, a, c);
+		} else {
+			return gjk_simplex2v(pair, ao, a);
+		}
 	} else {
-		return gjk_simplex2d(pair, ao, a);
+		return true;
 	}
 }
 
@@ -239,7 +245,7 @@ static bool detect_collision(Shape *s1, Shape *s2)
 	Shape *pair[2] = {s1, s2};
 	// vertex init_dir = v_sub(s1->position, s2->position);
 	vertex seed = minkowski_support(pair, (vertex){1.0, 0.0});
-	bool r = gjk_simplex2d(pair, v_neg(seed), seed);
+	bool r = gjk_simplex2v(pair, v_neg(seed), seed);
 	gjk_span = gjk_depth;
 	return r;
 }
@@ -315,9 +321,8 @@ static Shape difference_shape(Shape a, Shape b)
 static void render_origin(void)
 {
 	SDL_Point o = {512, 384};
-	SDL_SetRenderDrawColor(renderer, 255, 0, 0, SDL_ALPHA_OPAQUE);
+	SDL_SetRenderDrawColor(renderer, 100, 100, 100, SDL_ALPHA_OPAQUE);
 	SDL_RenderDrawLine(renderer, o.x - 512, o.y, o.x + 512, o.y);
-	SDL_SetRenderDrawColor(renderer, 0, 0, 255, SDL_ALPHA_OPAQUE);
 	SDL_RenderDrawLine(renderer, o.x, o.y - 384, o.x, o.y + 384);
 }
 
@@ -408,6 +413,8 @@ int main(int argc, char *argv[])
 		SDL_SetRenderDrawColor(renderer, 0, 0, 0, SDL_ALPHA_OPAQUE);
 		SDL_RenderClear(renderer);
 		render_origin();
+		SDL_SetRenderDrawColor(renderer, 0, 255, 0, SDL_ALPHA_OPAQUE);
+		render_shape(&dshape);
 		if (colliding) {
 			SDL_SetRenderDrawColor(renderer, 255, 0, 0, SDL_ALPHA_OPAQUE);
 		} else {
@@ -415,8 +422,6 @@ int main(int argc, char *argv[])
 		}
 		render_shape(&shape1);
 		render_shape(&shape2);
-		SDL_SetRenderDrawColor(renderer, 0, 255, 0, SDL_ALPHA_OPAQUE);
-		render_shape(&dshape);
 		SDL_SetRenderDrawColor(renderer, 0, 0, 255, SDL_ALPHA_OPAQUE);
 		render_shape(&vis_shape);
 		SDL_SetRenderDrawColor(renderer, 0, 0, 255, SDL_ALPHA_OPAQUE);
