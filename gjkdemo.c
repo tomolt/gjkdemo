@@ -66,6 +66,12 @@ static vertex v_perp(vertex v)
 	return (vertex){-v.y, v.x};
 }
 
+/* defined to be counter-clockwise. */
+static vertex v_perp2(vertex a, vertex b)
+{
+	return (vertex){a.y - b.y, b.x - a.x};
+}
+
 static vertex v_add(vertex lhs, vertex rhs)
 {
 	return (vertex){lhs.x + rhs.x, lhs.y + rhs.y};
@@ -74,11 +80,6 @@ static vertex v_add(vertex lhs, vertex rhs)
 static vertex v_sub(vertex lhs, vertex rhs)
 {
 	return (vertex){lhs.x - rhs.x, lhs.y - rhs.y};
-}
-
-static vertex v_scale(vertex v, float s)
-{
-	return (vertex){v.x * s, v.y * s};
 }
 
 static float v_dot(vertex lhs, vertex rhs)
@@ -164,24 +165,6 @@ static vertex support_polygon(Shape *shape, vertex direction)
 	return best_vertex(shape->vertices, support_polygon_score, &ud);
 }
 
-static vertex minkowski_support(Shape *pair[2], vertex dir)
-{
-	vertex a = v_add(support_polygon(pair[0], dir), pair[0]->position);
-	vertex b = v_add(support_polygon(pair[1], v_neg(dir)), pair[1]->position);
-	return (vertex){a.x - b.x, a.y - b.y};
-}
-
-#if 0
-static void gjk_visualize_line(Shape *pair[2], vertex a, vertex b)
-{
-	if (++gjk_depth != vis_slice) return;
-	vertex v[2] = {a, b};
-	vlist l = vlist_new(2, v);
-	vis_shape.position = (vertex){0.0, 0.0};
-	vis_shape.vertices = l;
-}
-#endif
-
 static void gjk_visualize_triangle(Shape *pair[2], vertex a, vertex b, vertex c)
 {
 	if (++gjk_depth != vis_slice) return;
@@ -191,45 +174,40 @@ static void gjk_visualize_triangle(Shape *pair[2], vertex a, vertex b, vertex c)
 	vis_shape.vertices = l;
 }
 
-static bool sgjk_simplex(Shape *pair[2], vertex dir, vertex b, vertex c)
+static bool sgjk_test(Shape *pair[2], vertex b, vertex c);
+
+static vertex sgjk_support(Shape *pair[2], vertex dir)
 {
-	vertex a = minkowski_support(pair, dir);
-	assert(triangle_winding(a, b, c) == true);
+	vertex a = v_add(support_polygon(pair[0], dir), pair[0]->position);
+	vertex b = v_add(support_polygon(pair[1], v_neg(dir)), pair[1]->position);
+	return (vertex){a.x - b.x, a.y - b.y};
+}
+
+static bool sgjk_crawl(Shape *pair[2], vertex p, vertex a, vertex b, vertex c)
+{
+	return v_dot(p, a) > 0.0 ? sgjk_test(pair, a, c) : sgjk_test(pair, b, a);
+}
+
+static bool sgjk_test(Shape *pair[2], vertex b, vertex c)
+{
+	vertex dir = v_perp2(c, b), a = sgjk_support(pair, dir);
 	if (v_dot(a, dir) <= 0.0) return false;
-	gjk_visualize_triangle(pair, a, b, c);
-	vertex ab = v_sub(b, a), ac = v_sub(c, a);
-	vertex pb = v_perp(ab), pc = v_perp(v_neg(ac));
-	vertex ps = v_scale(v_add(v_norm(pb), v_neg(v_norm(pc))), 0.5);
-	vertex ao = v_neg(a);
-	assert(v_length(ab) > 0.0);
-	assert(v_length(ac) > 0.0);
-	assert(v_distance(b, c) > 0.0);
-	if (v_dot(pb, ao) <= 0.0 && v_dot(pc, ao) <= 0.0) {
-		return true;
-	} else if (v_dot(ps, ao) > 0.0) {
-		return sgjk_simplex(pair, pb, b, a);
-	} else {
-		return sgjk_simplex(pair, pc, a, c);
-	}
+	vertex pb = v_perp2(a, b), pc = v_perp2(c, a);
+	if (v_dot(pb, a) >= 0.0 && v_dot(pc, a) >= 0.0) return true;
+	return sgjk_crawl(pair, v_add(v_norm(pb), v_neg(v_norm(pc))), a, b, c);
+}
+
+static bool sgjk(Shape *pair[2])
+{
+	vertex a = sgjk_support(pair, (vertex){ 1.0, 0.0});
+	vertex b = sgjk_support(pair, (vertex){-1.0, 0.0});
+	return sgjk_crawl(pair, v_perp2(a, b), a, b, b);
 }
 
 static bool detect_collision(Shape *s1, Shape *s2)
 {
-	gjk_depth = 0;
-	free(vis_shape.vertices.elems);
-	vis_shape.vertices = (vlist){0, NULL};
 	Shape *pair[2] = {s1, s2};
-	vertex b = minkowski_support(pair, (vertex){ 1.0,  0.0});
-	vertex c = minkowski_support(pair, (vertex){-1.0,  0.0});
-	vertex p = v_perp(v_sub(c, b));
-	bool r;
-	if (v_dot(p, v_neg(b)) > 0.0) {
-		r = sgjk_simplex(pair, p, c, b);
-	} else {
-		r = sgjk_simplex(pair, v_neg(p), b, c);
-	}
-	gjk_span = gjk_depth;
-	return r;
+	return sgjk(pair);
 }
 
 typedef struct {
