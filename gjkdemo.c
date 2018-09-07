@@ -102,7 +102,7 @@ static inline SDL_Point ftransform(vertex v)
 /* backward transform (from screen- to coordinate-space) */
 static inline vertex btransform(SDL_Point p)
 {
-	return (vertex){(p.x - 512) / 50.0, (-p.y + 384) / 50.0};
+	return (vertex){(p.x - 512) / 50.0, (384 - p.y) / 50.0};
 }
 
 static vertex best_vertex(vlist vertices, float (*score)(vertex, void *), void *userdata)
@@ -374,10 +374,7 @@ static void render_shape(Shape *shape)
 {
 	SDL_Point points[shape->vertices.count + 1];
 	for (int i = 0; i < shape->vertices.count; ++i) {
-		points[i] = (SDL_Point){
-			512 + (shape->vertices.elems[i].x + shape->position.x) * 50,
-			384 - (shape->vertices.elems[i].y + shape->position.y) * 50,
-		};
+		points[i] = ftransform(v_add(shape->vertices.elems[i], shape->position));
 	}
 	points[shape->vertices.count] = points[0];
 	SDL_RenderDrawLines(renderer, points, shape->vertices.count + 1);
@@ -394,6 +391,8 @@ typedef enum {
 
 Grabbable grabbed;
 
+SDL_Point mouse_prev;
+
 int main(int argc, char *argv[])
 {
 	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
@@ -405,61 +404,65 @@ int main(int argc, char *argv[])
 	bool running = true;
 	while (running) {
 		SDL_Event event;
-		SDL_PollEvent(&event);
-		switch (event.type) {
-		case SDL_KEYUP:
-			if (event.key.keysym.sym == SDLK_SPACE) {
-				debug_hook();
-			} else if (event.key.keysym.sym == SDLK_TAB) {
-				variant = (variant + 1) % 2;
-				switch (variant) {
-				case GJK:
-					SDL_SetWindowTitle(window, "2D GJK Demo   (Thomas Oltmann)");
-					break;
-				case SGJK:
-					SDL_SetWindowTitle(window, "2D SGJK Demo   (Thomas Oltmann)");
-					break;
+		while (SDL_PollEvent(&event)) {
+			switch (event.type) {
+			case SDL_KEYUP:
+				if (event.key.keysym.sym == SDLK_SPACE) {
+					debug_hook();
+				} else if (event.key.keysym.sym == SDLK_TAB) {
+					variant = (variant + 1) % 2;
+					switch (variant) {
+					case GJK:
+						SDL_SetWindowTitle(window, "2D GJK Demo   (Thomas Oltmann)");
+						break;
+					case SGJK:
+						SDL_SetWindowTitle(window, "2D SGJK Demo   (Thomas Oltmann)");
+						break;
+					}
 				}
-			}
-			break;
-		case SDL_MOUSEBUTTONDOWN: {
-			SDL_Point mp = {event.button.x, event.button.y};
-			vertex mv = btransform(mp);
-			if (grabbed == Grab_None) {
-				if (v_distance(mv, shape1.position) <= 0.5) {
-					grabbed = Grab_Shape1;
-				} else if (v_distance(mv, shape2.position) <= 0.5) {
-					grabbed = Grab_Shape2;
-				} else if (mp.y >= 768 - 32) {
-					grabbed = Grab_Slider;
-				} else {
-					grabbed = Grab_None;
+				break;
+			case SDL_MOUSEBUTTONDOWN: {
+				SDL_Point mp = {event.button.x, event.button.y};
+				vertex mv = btransform(mp);
+				Shape cursor = {{1, &mv}, {0.0, 0.0}};
+				if (grabbed == Grab_None) {
+					mouse_prev = mp;
+					if (detect_collision(&cursor, &shape1)) {
+						grabbed = Grab_Shape1;
+					} else if (detect_collision(&cursor, &shape2)) {
+						grabbed = Grab_Shape2;
+					} else if (mp.y >= 768 - 32) {
+						grabbed = Grab_Slider;
+					} else {
+						grabbed = Grab_None;
+					}
 				}
+				} break;
+			case SDL_MOUSEBUTTONUP:
+				grabbed = Grab_None;
+				break;
+			case SDL_MOUSEMOTION: {
+				SDL_Point cur_p = {event.motion.x, event.motion.y};
+				vertex rel_v = v_sub(btransform(cur_p), btransform(mouse_prev));
+				mouse_prev = cur_p;
+				switch (grabbed) {
+				case Grab_Shape1:
+					shape1.position = v_add(shape1.position, rel_v);
+					break;
+				case Grab_Shape2:
+					shape2.position = v_add(shape2.position, rel_v);
+					break;
+				case Grab_Slider:
+					slider = event.motion.x / 1024.0;
+					break;
+				case Grab_None: break;
+				}
+				} break;
+			case SDL_QUIT:
+				SDL_Log("Quit after %i ticks.", event.quit.timestamp);
+				running = false;
+				break;
 			}
-			} break;
-		case SDL_MOUSEBUTTONUP:
-			grabbed = Grab_None;
-			break;
-		case SDL_MOUSEMOTION: {
-			SDL_Point mp = {event.motion.x, event.motion.y};
-			vertex mv = btransform(mp);
-			switch (grabbed) {
-			case Grab_Shape1:
-				shape1.position = mv;
-				break;
-			case Grab_Shape2:
-				shape2.position = mv;
-				break;
-			case Grab_Slider:
-				slider = mp.x / 1024.0;
-				break;
-			case Grab_None: break;
-			}
-			} break;
-		case SDL_QUIT:
-			SDL_Log("Quit after %i ticks.", event.quit.timestamp);
-			running = false;
-			break;
 		}
 		vis_slice = roundf(slider * gjk_span);
 		Shape dshape = construct_hull(difference_shape(shape1, shape2));
