@@ -43,6 +43,7 @@ int vis_slice;
 int gjk_span;
 float slider = 0.75;
 Shape vis_shape;
+enum { GJK, SGJK } variant;
 
 static vertex v_neg(vertex v)
 {
@@ -165,6 +166,15 @@ static vertex support_polygon(Shape *shape, vertex direction)
 	return best_vertex(shape->vertices, support_polygon_score, &ud);
 }
 
+static void gjk_visualize_line(Shape *pair[2], vertex a, vertex b)
+{
+	if (++gjk_depth != vis_slice) return;
+	vertex v[2] = {a, b};
+	vlist l = vlist_new(2, v);
+	vis_shape.position = (vertex){0.0, 0.0};
+	vis_shape.vertices = l;
+}
+
 static void gjk_visualize_triangle(Shape *pair[2], vertex a, vertex b, vertex c)
 {
 	if (++gjk_depth != vis_slice) return;
@@ -172,6 +182,65 @@ static void gjk_visualize_triangle(Shape *pair[2], vertex a, vertex b, vertex c)
 	vlist l = vlist_new(3, v);
 	vis_shape.position = (vertex){0.0, 0.0};
 	vis_shape.vertices = l;
+}
+
+static bool gjk_simplex3v(Shape *pair[2], vertex dir, vertex a, vertex b);
+
+static vertex gjk_support(Shape *pair[2], vertex dir)
+{
+	vertex a = v_add(support_polygon(pair[0], dir), pair[0]->position);
+	vertex b = v_add(support_polygon(pair[1], v_neg(dir)), pair[1]->position);
+	return v_sub(a, b);
+}
+
+static bool gjk_simplex2v(Shape *pair[2], vertex dir, vertex b)
+{
+	vertex a = gjk_support(pair, dir);
+	if (v_dot(a, dir) <= 0.0) return false;
+	gjk_visualize_line(pair, a, b);
+	vertex ab = v_sub(b, a), ao = v_neg(a);
+	if (v_dot(ab, ao) >= 0.0) {
+		vertex n = v_perp(ab);
+		if (v_dot(n, ao) > 0.0) {
+			return gjk_simplex3v(pair, n, b, a);
+		} else {
+			return gjk_simplex3v(pair, v_neg(n), a, b);
+		}
+	} else {
+		return gjk_simplex2v(pair, ao, a);
+	}
+}
+
+static bool gjk_simplex3v(Shape *pair[2], vertex dir, vertex b, vertex c)
+{
+	vertex a = gjk_support(pair, dir);
+	if (v_dot(a, dir) <= 0.0) return false;
+	assert(triangle_winding(a, b, c) == true);
+	gjk_visualize_triangle(pair, a, b, c);
+	vertex ab = v_sub(b, a), ac = v_sub(c, a);
+	vertex nb = v_perp(ab), nc = v_perp(v_neg(ac));
+	vertex ao = v_neg(a);
+	if (v_dot(nb, ao) > 0.0) {
+		if (v_dot(ab, ao) > 0.0) {
+			return gjk_simplex3v(pair, nb, b, a);
+		} else {
+			return gjk_simplex2v(pair, ao, a);
+		}
+	} else if (v_dot(nc, ao) > 0.0) {
+		if (v_dot(ab, ao) > 0.0) {
+			return gjk_simplex3v(pair, nc, a, c);
+		} else {
+			return gjk_simplex2v(pair, ao, a);
+		}
+	} else {
+		return true;
+	}
+}
+
+static bool gjk(Shape *pair[2])
+{
+	vertex seed = gjk_support(pair, (vertex){1.0, 0.0});
+	return gjk_simplex2v(pair, v_neg(seed), seed);
 }
 
 static bool sgjk_test(Shape *pair[2], vertex b, vertex c);
@@ -212,7 +281,15 @@ static bool detect_collision(Shape *s1, Shape *s2)
 	free(vis_shape.vertices.elems);
 	vis_shape.vertices = (vlist){0, NULL};
 	Shape *pair[2] = {s1, s2};
-	bool r = sgjk(pair);
+	bool r;
+	switch (variant) {
+	case GJK:
+		r = gjk(pair);
+		break;
+	case SGJK:
+		r = sgjk(pair);
+		break;
+	}
 	gjk_span = gjk_depth;
 	return r;
 }
@@ -320,7 +397,7 @@ Grabbable grabbed;
 int main(int argc, char *argv[])
 {
 	SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
-	window = SDL_CreateWindow("2D SGJK (Simplified GJK) Demo   (Thomas Oltmann)",
+	window = SDL_CreateWindow("gjkdemo",
 		SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
 		1024, 768, 0);
 	renderer = SDL_CreateRenderer(window, -1,
@@ -333,6 +410,16 @@ int main(int argc, char *argv[])
 		case SDL_KEYUP:
 			if (event.key.keysym.sym == SDLK_SPACE) {
 				debug_hook();
+			} else if (event.key.keysym.sym == SDLK_TAB) {
+				variant = (variant + 1) % 2;
+				switch (variant) {
+				case GJK:
+					SDL_SetWindowTitle(window, "2D GJK Demo   (Thomas Oltmann)");
+					break;
+				case SGJK:
+					SDL_SetWindowTitle(window, "2D SGJK Demo   (Thomas Oltmann)");
+					break;
+				}
 			}
 			break;
 		case SDL_MOUSEBUTTONDOWN: {
